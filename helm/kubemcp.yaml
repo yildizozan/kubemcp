@@ -1,0 +1,25 @@
+replicaCount: 1
+
+serviceAccount:
+  create: true
+
+image:
+  tag: "2"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: kubemcp.df-api.net
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: dfapi-net-tls
+      hosts:
+        - kubemcp.df-api.net
