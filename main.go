@@ -11,6 +11,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -80,7 +81,7 @@ func main() {
 	)
 
 	s.AddTool(toolGetPodDetails, getPodDatailsHandler)
-	s.AddTool(toolPodsGetByLabel, getByLabelHandler)
+	s.AddTool(toolPodsGetByLabel, getPodByLabelHandler)
 
 	// Setup HTTP mux
 	mux := http.NewServeMux()
@@ -126,7 +127,15 @@ func main() {
 	}
 }
 
-func getByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+func deleteUnnecessaryFieldsFromPodSpec(pod *v1.Pod) {
+	pod.ManagedFields = nil
+
+	// Annotations map olduğu için delete kullanın
+	delete(pod.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+	delete(pod.Annotations, "kubernetes.io/psp")
+}
+
+func getPodByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	args, ok := request.Params.Arguments.(map[string]interface{})
 	if !ok {
 		return mcp.NewToolResultError("Invalid arguments format"), nil
@@ -149,12 +158,16 @@ func getByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 
 	log.Printf("Found %d pods", len(pods.Items))
 
-	// Delete noisy fields like ManagedFields
 	for i := range pods.Items {
-		pods.Items[i].ManagedFields = nil
+		deleteUnnecessaryFieldsFromPodSpec(&pods.Items[i])
 	}
 
-	return mcp.NewToolResultJSON(pods.Items)
+	jsonData, err := json.MarshalIndent(pods.Items, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Marshal error: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(string(jsonData)), nil
 }
 
 func getPodDatailsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -170,24 +183,12 @@ func getPodDatailsHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		namespace = "default"
 	}
 
-	// K8s API Çağrısı
 	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("Pod not found: %v", err)), nil
 	}
 
-	// ManagedFields gibi gürültülü verileri temizle
-	pod.ManagedFields = nil
+	deleteUnnecessaryFieldsFromPodSpec(pod)
 
-	// JSON'a çevir
-	jsonData, err := json.MarshalIndent(pod, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError("Unmarshall Error"), nil
-	}
-
-	result, err := mcp.NewToolResultJSON(jsonData)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return mcp.NewToolResultJSON(pod)
 }
