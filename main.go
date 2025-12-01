@@ -133,28 +133,34 @@ func getByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 	}
 
 	labelSelector, _ := args["labelSelector"].(string)
+	if labelSelector == "" {
+		return mcp.NewToolResultError("labelSelector is required"), nil
+	}
+
 	log.Println(labelSelector)
 
 	listOptions := metav1.ListOptions{
 		LabelSelector: labelSelector,
 	}
 	pods, err := clientset.CoreV1().Pods("").List(ctx, listOptions)
-	log.Println(pods.Items)
 	if err != nil {
-		return mcp.NewToolResultError("Error getting pods list"), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Error getting pods list: %v", err)), nil
 	}
 
+	log.Printf("Found %d pods", len(pods.Items))
+
 	// Delete noisy fields like ManagedFields
-	for _, pod := range pods.Items {
-		pod.ManagedFields = nil
+	for i := range pods.Items {
+		pods.Items[i].ManagedFields = nil
 	}
 
 	jsonData, err := json.MarshalIndent(pods.Items, "", "  ")
 	if err != nil {
-		return mcp.NewToolResultError("Unmarshall Error"), nil
+		return mcp.NewToolResultError(fmt.Sprintf("Marshal error: %v", err)), nil
 	}
 
-	result, err := mcp.NewToolResultJSON(jsonData)
+	// Convert []byte to string
+	result, err := mcp.NewToolResultJSON(string(jsonData))
 	if err != nil {
 		return nil, err
 	}
