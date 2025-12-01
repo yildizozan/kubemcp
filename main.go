@@ -154,17 +154,7 @@ func getByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 		pods.Items[i].ManagedFields = nil
 	}
 
-	jsonData, err := json.MarshalIndent(pods.Items, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Marshal error: %v", err)), nil
-	}
-
-	// Convert []byte to string
-	result, err := mcp.NewToolResultJSON(string(jsonData))
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
+	return mcp.NewToolResultJSON(pods.Items)
 }
 
 func getPodDatailsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
