@@ -71,7 +71,7 @@ func main() {
 		),
 	)
 
-	toolGetByLabel := mcp.NewTool("get_pods_by_label",
+	toolPodsGetByLabel := mcp.NewTool("get_pods_by_label",
 		mcp.WithDescription("Belirtilen label'a sahip podları getirir"),
 		mcp.WithString("labelSelector",
 			mcp.Description("Label seçici (örneğin: app=nginx veya app.kubernetes.io/instance=nginx)"),
@@ -80,7 +80,7 @@ func main() {
 	)
 
 	s.AddTool(toolGetPodDetails, getPodDatailsHandler)
-	s.AddTool(toolGetByLabel, getByLabelHandler)
+	s.AddTool(toolPodsGetByLabel, getByLabelHandler)
 
 	// Setup HTTP mux
 	mux := http.NewServeMux()
@@ -133,11 +133,13 @@ func getByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.C
 	}
 
 	labelSelector, _ := args["labelSelector"].(string)
+	log.Println(labelSelector)
 
 	listOptions := metav1.ListOptions{
 		LabelSelector: labelSelector,
 	}
 	pods, err := clientset.CoreV1().Pods("").List(ctx, listOptions)
+	log.Println(pods.Items)
 	if err != nil {
 		return mcp.NewToolResultError("Error getting pods list"), nil
 	}
