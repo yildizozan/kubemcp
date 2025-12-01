@@ -3,8 +3,8 @@ replicaCount: 1
 serviceAccount:
   create: true
 
-image:
-  tag: "2"
+imagePullSecrets:
+  - name: regcred
 
 service:
   type: ClusterIP
