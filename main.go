@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log"
@@ -105,8 +106,54 @@ func main() {
 		),
 	)
 
+	toolGetDeployment := mcp.NewTool("get_deployment",
+		mcp.WithDescription("Deployment detaylarını getirir"),
+		mcp.WithString("deploymentName",
+			mcp.Description("Deployment ismi"),
+			mcp.Required(),
+		),
+		mcp.WithString("namespace",
+			mcp.Description("Namespace (varsayılan: default)"),
+			mcp.DefaultString("default"),
+		),
+	)
+
+	toolGetPodDescription := mcp.NewTool("get_pod_description",
+		mcp.WithDescription("Pod açıklamasını getirir"),
+		mcp.WithString("podName"),
+		mcp.WithString("namespace",
+			mcp.Description("Namespace (varsayılan: default)"),
+			mcp.DefaultString("default"),
+		),
+	)
+
+	toolGetPodEvents := mcp.NewTool("get_pod_events",
+		mcp.WithDescription("Pod ile ilgili olayları getirir"),
+		mcp.WithString("podName"),
+		mcp.WithString("namespace",
+			mcp.Description("Namespace (varsayılan: default)"),
+			mcp.DefaultString("default"),
+		),
+	)
+
+	toolGetPodLogs := mcp.NewTool("get_pod_logs",
+		mcp.WithDescription("Pod loglarını getirir"),
+		mcp.WithString("podName"),
+		mcp.WithString("namespace",
+			mcp.Description("Namespace (varsayılan: default)"),
+			mcp.DefaultString("default"),
+		),
+		mcp.WithString("containerName",
+			mcp.Description("Container ismi (eğer podda birden fazla container varsa)"),
+		),
+	)
+
 	s.AddTool(toolGetPodDetails, getPodDatailsHandler)
 	s.AddTool(toolPodsGetByLabel, getPodByLabelHandler)
+	s.AddTool(toolGetDeployment, getDeploymentHandler)
+	s.AddTool(toolGetPodEvents, getPodEventsHandler)
+	s.AddTool(toolGetPodLogs, getPodLogsHandler)
+	s.AddTool(toolGetPodDescription, getPodDescriptionHandler)
 
 	// Setup HTTP mux
 	mux := http.NewServeMux()
@@ -187,7 +234,11 @@ func getPodByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		deleteUnnecessaryFieldsFromPodSpec(&pods.Items[i])
 	}
 
-	return mcp.NewToolResultJSON(pods.Items)
+	result := map[string]interface{}{
+		"pods": pods.Items,
+	}
+
+	return mcp.NewToolResultJSON(result)
 }
 
 func getPodDatailsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -211,4 +262,175 @@ func getPodDatailsHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 	deleteUnnecessaryFieldsFromPodSpec(pod)
 
 	return mcp.NewToolResultJSON(pod)
+}
+
+func getPodEventsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Invalid arguments format"), nil
+	}
+
+	podName, _ := args["podName"].(string)
+	namespace, _ := args["namespace"].(string)
+
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	if podName == "" {
+		return mcp.NewToolResultError("podName is required"), nil
+	}
+
+	// Get pod first to get UID
+	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Pod not found: %v", err)), nil
+	}
+
+	// Get events related to the pod
+	events, err := clientset.CoreV1().Events(namespace).List(ctx, metav1.ListOptions{
+		FieldSelector: fmt.Sprintf("involvedObject.name=%s,involvedObject.uid=%s", podName, pod.UID),
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error getting events: %v", err)), nil
+	}
+
+	// Clean up unnecessary fields
+	for i := range events.Items {
+		events.Items[i].ManagedFields = nil
+	}
+	log.Println(events.Items)
+
+	result := map[string]interface{}{
+		"podName":   podName,
+		"namespace": namespace,
+		"events":    events.Items,
+		"count":     len(events.Items),
+	}
+
+	return mcp.NewToolResultJSON(result)
+}
+
+func getDeploymentHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Invalid arguments format"), nil
+	}
+
+	deploymentName, _ := args["deploymentName"].(string)
+	namespace, _ := args["namespace"].(string)
+
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	if deploymentName == "" {
+		return mcp.NewToolResultError("deploymentName is required"), nil
+	}
+
+	deployment, err := clientset.AppsV1().Deployments(namespace).Get(ctx, deploymentName, metav1.GetOptions{})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Deployment not found: %v", err)), nil
+	}
+
+	deployment.ManagedFields = nil
+
+	return mcp.NewToolResultJSON(deployment)
+}
+
+func getPodDescriptionHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Invalid arguments format"), nil
+	}
+
+	podName, _ := args["podName"].(string)
+	namespace, _ := args["namespace"].(string)
+
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	if podName == "" {
+		return mcp.NewToolResultError("podName is required"), nil
+	}
+
+	pod, err := clientset.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Pod not found: %v", err)), nil
+	}
+
+	description := map[string]interface{}{
+		"name":        pod.Name,
+		"namespace":   pod.Namespace,
+		"labels":      pod.Labels,
+		"annotations": pod.Annotations,
+		"status":      pod.Status.Phase,
+		"hostIP":      pod.Status.HostIP,
+		"podIP":       pod.Status.PodIP,
+		"startTime":   pod.Status.StartTime,
+		"containers": func() []map[string]interface{} {
+			containers := make([]map[string]interface{}, len(pod.Spec.Containers))
+			for i, c := range pod.Spec.Containers {
+				containers[i] = map[string]interface{}{
+					"name":  c.Name,
+					"image": c.Image,
+					"ports": c.Ports,
+				}
+			}
+			return containers
+		}(),
+	}
+
+	return mcp.NewToolResultJSON(description)
+}
+
+func getPodLogsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Invalid arguments format"), nil
+	}
+
+	podName, _ := args["podName"].(string)
+	containerName, _ := args["containerName"].(string)
+	namespace, _ := args["namespace"].(string)
+
+	if namespace == "" {
+		namespace = "default"
+	}
+
+	if podName == "" {
+		return mcp.NewToolResultError("podName is required"), nil
+	}
+
+	// Pod logs options
+	podLogOpts := v1.PodLogOptions{
+		Container:  containerName,
+		Follow:     false,
+		Timestamps: true,
+		TailLines:  func(i int64) *int64 { return &i }(100), // Son 500 satır
+	}
+
+	req := clientset.CoreV1().Pods(namespace).GetLogs(podName, &podLogOpts)
+	podLogs, err := req.Stream(ctx)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error getting pod logs: %v", err)), nil
+	}
+	defer podLogs.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(podLogs)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("Error reading pod logs: %v", err)), nil
+	}
+	log.Println(buf.String())
+
+	result := map[string]interface{}{
+		"podName":       podName,
+		"namespace":     namespace,
+		"containerName": containerName,
+		"logs":          buf.String(),
+	}
+
+	return mcp.NewToolResultJSON(result)
 }
