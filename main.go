@@ -127,8 +127,32 @@ func main() {
 }
 
 func getByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args, ok := request.Params.Arguments.(map[string]interface{})
+	if !ok {
+		return mcp.NewToolResultError("Invalid arguments format"), nil
+	}
 
-	result, err := mcp.NewToolResultJSON("")
+	labelSelector, _ := args["labelSelector"].(string)
+
+	listOptions := metav1.ListOptions{
+		LabelSelector: labelSelector,
+	}
+	pods, err := clientset.CoreV1().Pods("").List(ctx, listOptions)
+	if err != nil {
+		return mcp.NewToolResultError("Error getting pods list"), nil
+	}
+
+	// Delete noisy fields like ManagedFields
+	for _, pod := range pods.Items {
+		pod.ManagedFields = nil
+	}
+
+	jsonData, err := json.MarshalIndent(pods.Items, "", "  ")
+	if err != nil {
+		return mcp.NewToolResultError("Unmarshall Error"), nil
+	}
+
+	result, err := mcp.NewToolResultJSON(jsonData)
 	if err != nil {
 		return nil, err
 	}
