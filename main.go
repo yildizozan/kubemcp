@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -15,6 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 var (
@@ -38,11 +40,34 @@ func init() {
 }
 
 func main() {
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		panic(fmt.Sprintf("In-Cluster config yüklenemedi: %v", err))
-	}
+	var config *rest.Config
+	var err error
 
+	// Önce in-cluster config deneyelim
+	config, err = rest.InClusterConfig()
+	if err != nil {
+		log.Println("In-cluster config bulunamadı, kubeconfig dosyası deneniyor...")
+
+		// KUBECONFIG environment variable'ını kontrol et
+		kubeconfigPath := os.Getenv("KUBECONFIG")
+		if kubeconfigPath == "" {
+			// Varsayılan home directory kubeconfig path
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				panic(fmt.Sprintf("Home directory bulunamadı: %v", err))
+			}
+			kubeconfigPath = filepath.Join(homeDir, ".kube", "config")
+		}
+
+		// Kubeconfig dosyasından config yükle
+		config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+		if err != nil {
+			panic(fmt.Sprintf("Kubeconfig yüklenemedi: %v", err))
+		}
+		log.Printf("Kubeconfig kullanılıyor: %s", kubeconfigPath)
+	} else {
+		log.Println("In-cluster config kullanılıyor")
+	}
 	clientset, err = kubernetes.NewForConfig(config)
 	if err != nil {
 		panic(fmt.Sprintf("Kubernetes clientset oluşturulamadı: %v", err))
@@ -162,12 +187,7 @@ func getPodByLabelHandler(ctx context.Context, request mcp.CallToolRequest) (*mc
 		deleteUnnecessaryFieldsFromPodSpec(&pods.Items[i])
 	}
 
-	jsonData, err := json.MarshalIndent(pods.Items, "", "  ")
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("Marshal error: %v", err)), nil
-	}
-
-	return mcp.NewToolResultText(string(jsonData)), nil
+	return mcp.NewToolResultJSON(pods.Items)
 }
 
 func getPodDatailsHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
